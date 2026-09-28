@@ -10,16 +10,18 @@ const MAX_IDLE_CELLS=600_000;
 const MAX_CACHE_BYTES=32*1024*1024;
 const MAX_RASTER_BYTES=96*1024*1024;
 const FADE_IN_MS=180;
-const FADE_OUT_MS=480;
+const SEA_COLOR='#0a2c48';
 
 let map=null,availableTiles=null,zoom=1,fitZoom=1,panX=0,panY=0,detailMode=0;
-let dragging=null,frame=0,updateTimer=0,active=0,transferred=0;
+let dragging=null,pinch=null,frame=0,updateTimer=0,active=0,transferred=0;
+const touchPoints=new Map();
+let suppressTouchClickUntil=0;
 let needed=new Map(),tiles=new Map(),requests=new Map(),queue=[];
 let cacheBytes=0,cacheTick=0;
 let rasterBytes=0,rasterTick=0;
 let lastError='',rasterTimer=0,rasterRevision=0;
 let displayedFactor=0,idleFactor=0,idleTimer=0;
-let shownFactor=0,transition=null;
+let loadFocus=null;
 const viewListeners=new Set();
 
 window.lineageMapView={
@@ -55,11 +57,13 @@ window.lineageMapView={
   },
   focus(x,y){
     if(!map)return;
+    loadFocus={x,y};
     panX=(map.width/2-x)*zoom;
     panY=(map.height/2-y)*zoom;
     cancelIdle(true);render(0);refreshRasters();
   },
   onChange(listener){viewListeners.add(listener);return ()=>viewListeners.delete(listener);},
+  suppressPlacementClick(){return Date.now()<suppressTouchClickUntil;},
 };
 function notifyView(){for(const listener of viewListeners)listener();}
 
@@ -72,6 +76,21 @@ function bounds(margin=0){
     top:map.height/2+(-height/2-panY)/zoom-extraY,
     bottom:map.height/2+(height/2-panY)/zoom+extraY,
   };
+}
+
+function visualFocus(){
+  return loadFocus||{x:map.width/2-panX/zoom,y:map.height/2-panY/zoom};
+}
+
+function tileDistanceSquared(tile,focus){
+  const factor=tile.factor;
+  const left=tile.x*TILE_CELLS*map.columnWidth*factor-map.halfWidth*factor;
+  const right=(tile.x+1)*TILE_CELLS*map.columnWidth*factor;
+  const top=tile.y*TILE_CELLS*map.rowHeight*factor-map.halfHeight*factor;
+  const bottom=(tile.y+1)*TILE_CELLS*map.rowHeight*factor;
+  const dx=Math.max(left-focus.x,0,focus.x-right);
+  const dy=Math.max(top-focus.y,0,focus.y-bottom);
+  return dx*dx+dy*dy;
 }
 
 function cellEstimate(factor,area){
@@ -113,7 +132,7 @@ function cancelIdle(resetDisplay=false){
 }
 
 function scheduleIdleRefine(){
-  if(!map||dragging||transition||detailMode!==0||idleFactor||idleTimer)return;
+  if(!map||dragging||detailMode!==0||idleFactor||idleTimer)return;
   const index=map.levels.indexOf(level());
   if(index<=0)return;
   const coarse=level();
@@ -123,7 +142,7 @@ function scheduleIdleRefine(){
   if([...coarseTiles.keys()].some(key=>!tiles.has(key)))return;
   idleTimer=setTimeout(()=>{
     idleTimer=0;
-    if(dragging||transition||detailMode!==0||level()!==coarse)return;
+    if(dragging||detailMode!==0||level()!==coarse)return;
     const fineTiles=tileList(finer,bounds(.25));
     if(!fineTiles.size)return;
     idleFactor=finer;
@@ -135,7 +154,7 @@ function scheduleIdleRefine(){
 function completeIdleRefine(){
   if(!idleFactor)return;
   const fineTiles=tileList(idleFactor,bounds(.25));
-  if([...fineTiles.keys()].some(key=>!tiles.has(key)))return;
+  if(![...fineTiles.keys()].some(key=>tiles.has(key)))return;
   displayedFactor=idleFactor;
   idleFactor=0;
   updateTiles();
@@ -166,19 +185,7 @@ function tileList(factor,area){
 
 function scheduleUpdate(delay){
   clearTimeout(updateTimer);
-  updateTimer=setTimeout(updateTiles,delay);
-}
-
-function syncTransition(){
-  const target=level();
-  if(transition?.toFactor===target)return;
-  if(transition){shownFactor=transition.fromFactor;transition=null;}
-  if(shownFactor&&shownFactor!==target&&
-     [...tileList(shownFactor,bounds()).keys()].some(key=>tiles.has(key))){
-    transition={fromFactor:shownFactor,toFactor:target,startedAt:null,preparing:false};
-  }else{
-    shownFactor=target;
-  }
+  updateTimer=setTimeout(()=>{updateTimer=0;updateTiles();},delay);
 }
 
 function trimCache(){
@@ -212,13 +219,19 @@ function trimRasters(protect=null){
 function updateTiles(){
   if(!map)return;
   lastError='';
-  syncTransition();
   const factor=level(),area=bounds(.25);
   const displayTiles=tileList(factor,area);
   needed=new Map(displayTiles);
-  if(transition){
-    for(const [key,tile] of tileList(transition.fromFactor,area)){
-      if(tiles.has(key))needed.set(key,tile);
+  const missing=[...displayTiles.keys()].some(key=>!tiles.has(key));
+  const coarser=map.levels[map.levels.indexOf(factor)+1];
+  const fallbackFactor=missing?coarser:null;
+  if(fallbackFactor){
+    for(const [key,tile] of tileList(fallbackFactor,area))needed.set(key,tile);
+  }
+  if(missing){
+    for(const coarse of map.levels.filter(value=>value>factor)){
+      for(const [key,tile] of tileList(coarse,area))
+        if(tiles.has(key))needed.set(key,tile);
     }
   }
   if(idleFactor){
@@ -230,16 +243,13 @@ function updateTiles(){
   for(const [key,request] of requests){
     if(!needed.has(key))request.abort();
   }
-  const centerX=map.width/2-panX/zoom,centerY=map.height/2-panY/zoom;
+  const focus=visualFocus();
   queue=[...needed.values()].filter(tile=>!tiles.has(tile.key)&&!requests.has(tile.key));
   queue.sort((a,b)=>{
-    if((a.factor===factor)!==(b.factor===factor))return a.factor===factor?-1:1;
-    const distance=tile=>{
-      const x=(tile.x+.5)*TILE_CELLS*map.columnWidth*tile.factor;
-      const y=(tile.y+.5)*TILE_CELLS*map.rowHeight*tile.factor;
-      return (x-centerX)**2+(y-centerY)**2;
-    };
-    return distance(a)-distance(b);
+    const distance=tileDistanceSquared(a,focus)-tileDistanceSquared(b,focus);
+    if(distance)return distance;
+    if(a.factor!==b.factor)return b.factor-a.factor;
+    return a.key.localeCompare(b.key);
   });
   paintSoon();
   pump();
@@ -269,12 +279,16 @@ function pump(){
         const buffer=await response.arrayBuffer();
         const decoded=await decodeTile(buffer);
         if(requests.get(tile.key)===controller&&needed.has(tile.key)){
-          tiles.set(tile.key,{...tile,bytes:decoded,styles:new Map(),raster:null,lastUsed:++cacheTick});
+          tiles.set(tile.key,{...tile,bytes:decoded,styles:new Map(),raster:null,
+            loadedAt:Date.now(),lastUsed:++cacheTick});
           cacheBytes+=decoded.byteLength;
           trimCache();
           transferred+=buffer.byteLength;
           paintSoon();
           completeIdleRefine();
+          if(tile.factor===level()&&
+             [...tileList(level(),bounds(.25)).keys()].every(key=>tiles.has(key)))
+            scheduleUpdate(0);
         }
       })
       .catch(error=>{
@@ -335,7 +349,6 @@ function rasterize(tile){
     for(let col=tile.x*TILE_CELLS;col<Math.min(maxCols,(tile.x+1)*TILE_CELLS);col++){
       const offset=((row%TILE_CELLS)*TILE_CELLS+(col%TILE_CELLS))*3;
       const r=tile.bytes[offset],g=tile.bytes[offset+1],b=tile.bytes[offset+2];
-      if(r===255&&g===255&&b===255)continue;
       const cx=firstX+col*columnWidth;
       brush.beginPath();
       brush.moveTo(cx,cy-halfHeight);
@@ -343,13 +356,14 @@ function rasterize(tile){
       brush.lineTo(cx,cy+halfHeight);
       brush.lineTo(cx-halfWidth,cy);
       brush.closePath();
-      brush.fillStyle=styleFor(tile,r,g,b);
+      brush.fillStyle=r===255&&g===255&&b===255?SEA_COLOR:styleFor(tile,r,g,b);
       brush.fill();
     }
   }
   clearRaster(tile);
   const bytes=pixelWidth*pixelHeight*4;
   tile.raster={surface,left,top,widthWorld,heightWorld,scale,bytes};
+  tile.firstRasterAt ||= Date.now();
   tile.lastRasterUsed=++rasterTick;
   rasterBytes+=bytes;
   trimRasters(tile);
@@ -360,7 +374,7 @@ function refreshRasters(){
   const revision=++rasterRevision;
   rasterTimer=setTimeout(()=>{
     if(dragging)return;
-    const factor=transition?.fromFactor||level();
+    const factor=level();
     const stale=[...tileList(factor,bounds(.2)).keys()]
       .map(key=>tiles.get(key)).filter(tile=>{
         if(!tile?.raster)return false;
@@ -370,18 +384,11 @@ function refreshRasters(){
           Math.sqrt(MAX_TILE_PIXELS/(widthWorld*heightWorld)));
         return tile.raster.scale<desired*.9;
       });
-    const centerX=map.width/2-panX/zoom,centerY=map.height/2-panY/zoom;
-    stale.sort((a,b)=>{
-      const distance=tile=>{
-        const x=(tile.x+.5)*TILE_CELLS*map.columnWidth*tile.factor;
-        const y=(tile.y+.5)*TILE_CELLS*map.rowHeight*tile.factor;
-        return (x-centerX)**2+(y-centerY)**2;
-      };
-      return distance(a)-distance(b);
-    });
+    const focus=visualFocus();
+    stale.sort((a,b)=>tileDistanceSquared(a,focus)-tileDistanceSquared(b,focus));
     function next(){
       if(revision!==rasterRevision||!stale.length)return;
-      if(dragging||(transition?.fromFactor||level())!==factor)return;
+      if(dragging||level()!==factor)return;
       const tile=stale.shift();
       if(tiles.get(tile.key)===tile){
         rasterize(tile);
@@ -402,87 +409,106 @@ function paint(){
     canvas.width=pixelWidth;canvas.height=pixelHeight;
   }
   context.setTransform(dpr,0,0,dpr,0,0);
-  context.fillStyle='#0a2c48';context.fillRect(0,0,width,height);
+  context.fillStyle=SEA_COLOR;context.fillRect(0,0,width,height);
   if(!map)return;
   notifyView();
-  syncTransition();
   const area=bounds(.2);
   context.setTransform(dpr*zoom,0,0,dpr*zoom,
     dpr*(width/2+panX-map.width/2*zoom),
     dpr*(height/2+panY-map.height/2*zoom));
-  function drawLayer(factor,opacity){
-    if(opacity<=0)return;
-    context.globalAlpha=opacity;
-    for(const tile of tiles.values()){
-      if(tile.factor!==factor)continue;
-      const tileLeft=tile.x*TILE_CELLS*map.columnWidth*factor-map.halfWidth*factor;
-      const tileTop=tile.y*TILE_CELLS*map.rowHeight*factor-map.halfHeight*factor;
-      const tileRight=(tile.x+1)*TILE_CELLS*map.columnWidth*factor;
-      const tileBottom=(tile.y+1)*TILE_CELLS*map.rowHeight*factor;
-      if(tileLeft>area.right||tileTop>area.bottom||
-         tileRight<area.left||tileBottom<area.top)continue;
-      if(!tile.raster)rasterize(tile);
+  const now=Date.now();
+  const target=level();
+  const needsCoarse=[...tileList(target,area).keys()].some(key=>{
+    const tile=tiles.get(key);
+    return !tile||!tile.raster||now-(tile.firstRasterAt||tile.loadedAt||0)<FADE_IN_MS;
+  });
+  const visible=[];
+  for(const tile of tiles.values()){
+    if(tile.factor<target||(!needsCoarse&&tile.factor>target))continue;
+    const tileLeft=tile.x*TILE_CELLS*map.columnWidth*tile.factor-map.halfWidth*tile.factor;
+    const tileTop=tile.y*TILE_CELLS*map.rowHeight*tile.factor-map.halfHeight*tile.factor;
+    const tileRight=(tile.x+1)*TILE_CELLS*map.columnWidth*tile.factor;
+    const tileBottom=(tile.y+1)*TILE_CELLS*map.rowHeight*tile.factor;
+    if(tileLeft>area.right||tileTop>area.bottom||
+       tileRight<area.left||tileBottom<area.top)continue;
+    visible.push(tile);
+  }
+  const focus=visualFocus();
+  const baseFactor=map.levels.find(factor=>factor>target&&visible.some(tile=>tile.factor===factor));
+  const pending=visible.filter(tile=>!tile.raster).sort((a,b)=>{
+    const distance=tileDistanceSquared(a,focus)-tileDistanceSquared(b,focus);
+    if(distance)return distance;
+    const priority=tile=>tile.factor===baseFactor?0:tile.factor===target?1:2;
+    return priority(a)-priority(b)||b.factor-a.factor;
+  });
+  for(const tile of pending.slice(0,2))rasterize(tile);
+  let fading=false;
+  function drawLayer(factor){
+    for(const tile of visible){
+      if(tile.factor!==factor||!tile.raster)continue;
       tile.lastRasterUsed=++rasterTick;
       const image=tile.raster;
+      context.globalAlpha=Math.min(1,Math.max(0,(now-(tile.firstRasterAt||0))/FADE_IN_MS));
+      if(context.globalAlpha<1)fading=true;
       context.drawImage(image.surface,image.left,image.top,image.widthWorld,image.heightWorld);
     }
   }
-  if(!transition){drawLayer(level(),1);return;}
-  const visible=tileList(transition.toFactor,bounds(.2));
-  const ready=[...visible.keys()].every(key=>tiles.has(key));
-  if(ready&&transition.startedAt===null){
-    const next=[...visible.keys()].map(key=>tiles.get(key)).find(tile=>!tile.raster);
-    if(next&&!transition.preparing){
-      const current=transition;
-      current.preparing=true;
-      requestAnimationFrame(()=>{
-        if(transition!==current)return;
-        if(dragging){current.preparing=false;return;}
-        if(tiles.get(next.key)===next&&!next.raster)rasterize(next);
-        current.preparing=false;
-        paintSoon();
-      });
-    }else if(!next){
-      transition.startedAt=Date.now();
-    }
+  for(const factor of [...map.levels].reverse()){
+    if(factor===target||(needsCoarse&&factor>target))drawLayer(factor);
   }
-  const elapsed=transition.startedAt===null?0:Date.now()-transition.startedAt;
-  drawLayer(transition.fromFactor,1-Math.min(1,elapsed/FADE_OUT_MS));
-  if(transition.startedAt!==null)drawLayer(transition.toFactor,Math.min(1,elapsed/FADE_IN_MS));
   context.globalAlpha=1;
-  if(transition.startedAt!==null&&elapsed>=FADE_OUT_MS){
-    shownFactor=transition.toFactor;transition=null;
-    updateTiles();
-    refreshRasters();
-  }else if(transition.startedAt!==null){
-    paintSoon();
-  }
+  if(fading||pending.length>2)paintSoon();
 }
 
 function paintSoon(){if(!dragging&&!frame)frame=requestAnimationFrame(paint);}
 function render(delay=70){paintSoon();if(map)scheduleUpdate(delay);}
 function fit(){
   if(!map)return;
+  loadFocus=null;
   fitZoom=Math.min(stage.clientWidth/map.width,stage.clientHeight/map.height)*.96;
   zoom=fitZoom;panX=0;panY=0;cancelIdle(true);render(0);refreshRasters();
 }
-function zoomAt(factor,clientX,clientY){
+function zoomAt(factor,clientX,clientY,preserveDetail=false){
   if(!map)return;
   const rect=stage.getBoundingClientRect();
   const x=clientX-rect.left-rect.width/2,y=clientY-rect.top-rect.height/2;
   const worldX=(x-panX)/zoom,worldY=(y-panY)/zoom;
+  loadFocus={x:map.width/2+worldX,y:map.height/2+worldY};
   const previousZoom=zoom;
   zoom=Math.max(fitZoom*.6,Math.min(fitZoom*24,zoom*factor));
   panX=x-worldX*zoom;panY=y-worldY*zoom;
-  cancelIdle(zoom<previousZoom);
+  cancelIdle(!preserveDetail&&zoom<previousZoom);
   if(zoom>=previousZoom)displayedFactor=Math.min(displayedFactor||baseLevel(),baseLevel());
   render();refreshRasters();
+}
+function touchPair(){
+  const [first,second]=[...touchPoints.values()];
+  return {x:(first.x+second.x)/2,y:(first.y+second.y)/2,
+    distance:Math.max(1,Math.hypot(first.x-second.x,first.y-second.y))};
+}
+function finishPinch(){
+  pinch=null;
+  suppressTouchClickUntil=Date.now()+350;
+  const fine=tileList(level(),bounds(.25));
+  if(level()<baseLevel()&&[...fine.keys()].some(key=>!tiles.has(key)))displayedFactor=baseLevel();
+  render(0);refreshRasters();
+}
+function resizeView(){
+  if(!map)return;
+  loadFocus=null;
+  const centerX=map.width/2-panX/zoom,centerY=map.height/2-panY/zoom;
+  fitZoom=Math.min(stage.clientWidth/map.width,stage.clientHeight/map.height)*.96;
+  zoom=Math.max(fitZoom*.6,Math.min(fitZoom*24,zoom));
+  panX=(map.width/2-centerX)*zoom;
+  panY=(map.height/2-centerY)*zoom;
+  render(0);refreshRasters();
 }
 const center=()=>{const r=stage.getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2];};
 document.getElementById('fit').onclick=fit;
 document.getElementById('zoomIn').onclick=()=>zoomAt(1.4,...center());
 document.getElementById('zoomOut').onclick=()=>zoomAt(1/1.4,...center());
 document.getElementById('detail').onclick=()=>{
+  loadFocus=null;
   detailMode=detailMode===0?1:detailMode===1?-1:0;
   document.getElementById('detail').textContent=`細節：${detailMode===1?'省流':detailMode===-1?'精細':'自動'}`;
   cancelIdle(true);render(0);refreshRasters();
@@ -494,6 +520,18 @@ stage.addEventListener('wheel',event=>{
 stage.addEventListener('pointerdown',event=>{
   if(event.target.closest('button,a,input,textarea,select,form,.panel'))return;
   event.preventDefault();
+  if(event.pointerType==='touch'){
+    touchPoints.set(event.pointerId,{x:event.clientX,y:event.clientY});
+    stage.setPointerCapture(event.pointerId);
+    if(touchPoints.size===2){
+      if(frame){cancelAnimationFrame(frame);frame=0;}
+      dragging=null;canvas.style.transform='';stage.classList.remove('dragging');
+      pinch=touchPair();cancelIdle();suppressTouchClickUntil=Date.now()+350;
+      return;
+    }
+    if(touchPoints.size>2)return;
+  }
+  loadFocus=null;
   cancelIdle();scheduleUpdate(0);
   if(frame){cancelAnimationFrame(frame);frame=0;}
   dragging={id:event.pointerId,startX:event.clientX,startY:event.clientY,
@@ -501,6 +539,18 @@ stage.addEventListener('pointerdown',event=>{
   stage.setPointerCapture(event.pointerId);stage.classList.add('dragging');
 });
 stage.addEventListener('pointermove',event=>{
+  if(event.pointerType==='touch'&&touchPoints.has(event.pointerId)){
+    touchPoints.set(event.pointerId,{x:event.clientX,y:event.clientY});
+    if(pinch&&touchPoints.size===2){
+      event.preventDefault();
+      const current=touchPair();
+      zoomAt(current.distance/pinch.distance,pinch.x,pinch.y,true);
+      panX+=current.x-pinch.x;panY+=current.y-pinch.y;
+      pinch=current;
+      suppressTouchClickUntil=Date.now()+350;
+      return;
+    }
+  }
   if(!dragging||dragging.id!==event.pointerId)return;
   const dx=event.clientX-dragging.startX,dy=event.clientY-dragging.startY;
   panX=dragging.basePanX+dx;panY=dragging.basePanY+dy;
@@ -515,6 +565,19 @@ stage.addEventListener('pointermove',event=>{
   scheduleUpdate(140);
 });
 function stopDrag(event){
+  if(event.pointerType==='touch'){
+    touchPoints.delete(event.pointerId);
+    if(pinch){
+      if(touchPoints.size>=2){pinch=touchPair();return;}
+      finishPinch();
+      if(touchPoints.size===1){
+        const [id,point]=[...touchPoints.entries()][0];
+        dragging={id,startX:point.x,startY:point.y,basePanX:panX,basePanY:panY};
+        stage.classList.add('dragging');
+      }
+      return;
+    }
+  }
   if(dragging?.id!==event.pointerId)return;
   dragging=null;canvas.style.transform='';stage.classList.remove('dragging');
   if(level()!==baseLevel()){
@@ -525,7 +588,7 @@ function stopDrag(event){
 }
 stage.addEventListener('pointerup',stopDrag);
 stage.addEventListener('pointercancel',stopDrag);
-window.addEventListener('resize',fit);
+window.addEventListener('resize',resizeView);
 
 fetch('./meta.json').then(response=>{
   if(!response.ok)throw new Error(`HTTP ${response.status}`);

@@ -163,6 +163,9 @@ function positionPlacementTarget(point){
   placementDiamond.style.height=`${Math.max(14,size.height)}px`;
   placementTarget.hidden=false;
   if(editingNew){
+    landmarkPanel.classList.toggle('editor-top',
+      !!window.matchMedia?.('(max-width: 600px)').matches&&
+      position.y>landmarkStage.clientHeight*.5);
     const left=landmarkPanel.classList.contains('editor-left');
     if(position.x>landmarkStage.clientWidth*.65&&!left)landmarkPanel.classList.add('editor-left');
     if(position.x<landmarkStage.clientWidth*.35&&left)landmarkPanel.classList.remove('editor-left');
@@ -189,7 +192,7 @@ function stopFocusedEditor(){
   placementTarget.classList.remove('dragging-target');
   placementOverlay.hidden=true;placementTarget.hidden=true;
   landmarkStage.classList.remove('editing-coordinate');
-  landmarkPanel.classList.remove('editor-left');
+  landmarkPanel.classList.remove('editor-left','editor-top');
 }
 
 function stopNewPlacement(){
@@ -527,6 +530,7 @@ placementTarget.addEventListener('pointerup',stopTargetDrag);
 placementTarget.addEventListener('pointercancel',stopTargetDrag);
 landmarkStage.addEventListener('click',event=>{
   if(dragged){dragged=false;return;}
+  if(mapView.suppressPlacementClick?.())return;
   if(!placing||!canEdit()||event.target.closest('button,a,form,.panel'))return;
   const point=mapView.snapClient(event.clientX,event.clientY);
   if(!point)return;

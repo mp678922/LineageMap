@@ -2,16 +2,16 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>亞丁大陸｜菱形格地形圖</title>
 <style>
 :root{color-scheme:dark;--sea:#0a2c48;--panel:#171d20e8;--line:#ffffff36;--text:#f2ecdf}
 *{box-sizing:border-box}
 html,body{width:100%;height:100%;margin:0;background:var(--sea);color:var(--text);font:14px/1.4 system-ui,"Noto Sans TC","Microsoft JhengHei",sans-serif}
-#stage{position:relative;width:100%;height:100%;overflow:hidden;touch-action:none;cursor:grab;background:var(--sea)}
+#stage{position:relative;width:100%;height:100%;overflow:hidden;cursor:grab;background:var(--sea)}
 #stage,#stage *{user-select:none;-webkit-user-select:none}
 #stage.dragging{cursor:grabbing}
-#terrain{position:absolute;left:-20%;top:-20%;width:140%;height:140%;user-select:none;pointer-events:none}
+#terrain{position:absolute;left:-20%;top:-20%;width:140%;height:140%;user-select:none;touch-action:none}
 #landmark-layer{position:absolute;inset:0;pointer-events:none;z-index:1}
 .landmark-pin{position:absolute;transform:translate(-50%,-100%);padding:4px 7px;height:auto;max-width:170px;background:#f5cf68;color:#29251a;border:2px solid #493b20;border-radius:16px;box-shadow:0 2px 8px #0008;font-size:12px;white-space:nowrap;pointer-events:auto}
 .landmark-pin::after{content:"";position:absolute;left:50%;bottom:-7px;width:9px;height:9px;background:#f5cf68;border-right:2px solid #493b20;border-bottom:2px solid #493b20;transform:translateX(-50%) rotate(45deg)}
@@ -35,7 +35,7 @@ html,body{width:100%;height:100%;margin:0;background:var(--sea);color:var(--text
 #landmarks-toggle[aria-expanded="true"]{border-color:#d7ad57;background:#d7ad5740}
 button{height:34px;min-width:34px;padding:0 9px;border:0;border-radius:6px;background:transparent;color:var(--text);font:inherit;cursor:pointer}
 button:hover,button:focus-visible{background:#ffffff23;outline:none}
-#landmark-panel{z-index:2;top:65px;left:14px;width:min(340px,calc(100vw - 28px));max-height:calc(100vh - 85px);overflow:auto}
+#landmark-panel{z-index:2;top:65px;left:14px;width:min(340px,calc(100vw - 28px));max-height:calc(100vh - 85px);overflow:auto;touch-action:pan-y;overscroll-behavior:contain}
 #landmark-panel[hidden],#landmark-list-view[hidden],#landmark-edit-view[hidden],#editor-gate[hidden],#editor-workspace[hidden],#landmark-editor[hidden]{display:none}
 #landmark-panel header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 9px 0}
 #landmark-panel h2{font-size:15px;margin:0}
@@ -44,7 +44,7 @@ button:hover,button:focus-visible{background:#ffffff23;outline:none}
 #landmark-tabs button{flex:1;min-width:0;padding:0 5px;color:#c8c7be;border-radius:6px 6px 0 0}
 #landmark-tabs button[aria-selected="true"]{color:#ffe2a1;background:#d7ad5733;box-shadow:inset 0 -2px #d7ad57}
 #landmark-status{padding:0 14px;font-size:12px}
-#landmark-list,#editor-landmark-list{display:grid;gap:5px;max-height:min(42vh,300px);overflow:auto;padding:3px 12px 12px}
+#landmark-list,#editor-landmark-list{display:grid;gap:5px;max-height:min(42vh,300px);overflow:auto;touch-action:pan-y;padding:3px 12px 12px}
 #landmark-list button,#editor-landmark-list button{height:auto;min-height:34px;text-align:left;background:#ffffff12;padding:7px 9px}
 #landmark-list button.selected,#editor-landmark-list button.selected{background:#d7ad5740}
 #landmark-info{padding:0 14px}
@@ -100,9 +100,24 @@ button:hover,button:focus-visible{background:#ffffff23;outline:none}
 #stage.editing-coordinate #landmark-position{font-weight:700;color:#ffe17a}
 #stage.editing-coordinate #placement-target{pointer-events:auto;touch-action:none;cursor:grab}
 #stage.editing-coordinate #placement-target.dragging-target{cursor:grabbing}
-@media(max-width:600px){#title{right:8px;bottom:8px}#controls{top:8px;right:8px}#controls button{padding:0 6px}#landmarks-toggle{top:8px;left:8px}#landmark-panel{top:54px;left:8px}}
-@media(max-width:600px){#placement-cancel{top:10px;right:10px}#placement-guide{top:54px;max-width:calc(100vw - 20px)}}
-@media(max-width:600px){#stage.editing-coordinate #landmark-panel,#stage.editing-coordinate #landmark-panel.editor-left{top:auto;bottom:8px;right:8px;left:auto;width:min(300px,calc(100vw - 16px));max-height:min(48vh,430px)}}
+@media(max-width:600px){
+  html,body{height:100dvh}
+  #title{right:8px;bottom:calc(8px + env(safe-area-inset-bottom))}
+  #controls{top:calc(8px + env(safe-area-inset-top));right:8px}
+  #controls button{height:44px;min-width:44px;padding:0 6px}
+  #landmarks-toggle{top:calc(8px + env(safe-area-inset-top));left:8px;height:44px}
+  #landmark-panel{top:auto;bottom:calc(8px + env(safe-area-inset-bottom));left:8px;width:calc(100vw - 16px);max-height:min(68dvh,600px)}
+  #landmark-panel header button,#landmark-tabs button,#landmark-list button,#editor-landmark-list button,
+  #editor-toolbar button,#landmark-editor button,#landmark-login button,#editor-session-footer button{min-height:44px}
+  #landmark-list,#editor-landmark-list{max-height:min(43dvh,360px)}
+  #landmark-panel input,#landmark-panel textarea,#landmark-panel select{min-height:44px;font-size:16px}
+  .landmark-pin{min-height:38px;padding:7px 9px}
+  #placement-cancel{top:calc(8px + env(safe-area-inset-top));right:8px;min-height:44px}
+  #placement-guide{top:calc(58px + env(safe-area-inset-top));max-width:calc(100vw - 20px)}
+  #stage.editing-coordinate #landmark-panel,#stage.editing-coordinate #landmark-panel.editor-left{top:auto;bottom:calc(8px + env(safe-area-inset-bottom));right:8px;left:8px;width:calc(100vw - 16px);max-height:52dvh}
+  #stage.editing-coordinate #landmark-panel.editor-top{top:calc(8px + env(safe-area-inset-top));bottom:auto}
+}
+@media(max-width:420px){#controls{display:grid;grid-template-columns:repeat(3,44px)}#controls #detail{grid-column:1 / 4;grid-row:2}#controls #fit{grid-column:1;grid-row:1}#controls #zoomOut{grid-column:2;grid-row:1}#controls #zoomIn{grid-column:3;grid-row:1}}
 </style>
 </head>
 <body>
