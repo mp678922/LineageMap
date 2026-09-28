@@ -1,6 +1,6 @@
 # 亞丁大陸地形圖
 
-GitHub Pages 靜態版位於 `docs/`，發布該資料夾即可顯示地形。共享地標另由 Google 試算表與 Apps Script 提供資料服務。
+網站：[亞丁大陸地形圖](https://mp678922.github.io/LineageMap/)。GitHub Pages 由 `main` 分支的 `docs/` 發布；共享地標另由 Google 試算表與 Apps Script 提供資料服務。
 
 本機預覽：
 
@@ -8,7 +8,7 @@ GitHub Pages 靜態版位於 `docs/`，發布該資料夾即可顯示地形。�
 python -m http.server 8765 --bind 127.0.0.1 --directory docs
 ```
 
-開啟 <http://127.0.0.1:8765/>。將專案放進 GitHub 儲存庫後，可在 **Settings → Pages** 選擇分支的 `/docs` 作為發布來源。
+開啟 <http://127.0.0.1:8765/>。GitHub Pages 已設定以 `main` 分支的 `/docs` 作為發布來源。
 
 `docs/meta.json` 記錄尺寸與縮放層；`docs/tiles/` 是 gzip 壓縮的數值菱形格資料。瀏覽器最多同時下載 4 塊可見區附近的資料。已載入的數值資料保留在 32 MB 快取內，畫好的圖塊保留在 96 MB 快取內；移動或縮放時優先重用，超過預算才淘汰不在畫面上的舊圖塊。放大後若舊圖塊的像素密度明顯不足，停住後才逐塊重畫。平移時重用暫存畫布，逐格描邊已停用。縮放或切換細節時會暫留舊格資料，逐塊準備新圖後以 180 毫秒淡入新圖、480 毫秒淡出舊圖。自動模式先顯示粗格，停住約 400 毫秒後逐級載入更細的格子；龍之谷可由 4 倍格細化至 2 倍格、再到原始細格。拖曳或縮放會取消未完成的細化。「細節」可切換自動、省流與精細。
 
@@ -32,6 +32,6 @@ python -m http.server 8765 --bind 127.0.0.1 --directory docs
 2. 已將 `apps-script/Code.gs` 貼到綁定的 Apps Script 專案並儲存；專案編輯連結應保存在私人位置。
 3. 私人資料表的 `Settings!B2` 已有 4 位數編輯碼。可直接在該格查看或更換；不要將資料表公開分享，也不要把編輯碼填進 GitHub 或 `docs/`。
 4. 已將 Apps Script 部署為「以我的身分執行」與「所有人」可存取的[網頁應用程式](https://script.google.com/macros/s/AKfycbxoiFDHyNq49YB444Kes8T5vIdMqdPbi-hoA7KMCG0PNigx3wvMIwMXBUty_4i3Fh0/exec)。服務僅要求操作這份試算表的權限。修改 Apps Script 程式後需更新既有部署作業的版本。
-5. 服務網址已填入 `docs/landmark-config.js`。GitHub Pages 尚未發布；本機預覽可先讀取線上地標。網址不含編輯碼。
+5. 服務網址已填入 `docs/landmark-config.js`，GitHub Pages 網站已發布。網址不含編輯碼。
 
 訪客只讀取公開地標資料，`Settings` 工作表及編輯碼不會由公開讀取接口傳出；寫入與刪除都需在 Apps Script 驗證編輯碼。瀏覽器每 30 秒、以及回到分頁時更新一次地標。Apps Script 的跨網域讀取使用只含公開資料的 JSONP；寫入採 POST，並用一次性操作識別碼查詢結果。若顯示「無法確認操作結果」，先重新讀取地標，避免重複新增。知道編輯碼的人都能編輯全部地標。
