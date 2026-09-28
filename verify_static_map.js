@@ -4,7 +4,7 @@ const vm=require('vm');
 const assert=require('assert');
 
 const controls={};
-for(const id of ['fit','zoomIn','zoomOut','detail'])controls[id]={textContent:''};
+for(const id of ['fit','zoomIn','zoomOut'])controls[id]={textContent:''};
 const listeners={};
 const windowListeners={};
 const counts={paths:0,draws:0,fadeDraws:0};
@@ -98,43 +98,21 @@ async function settle(){
     'coarse layers should draw before finer layers');
   context.partialTile=partialTile;
   vm.runInContext('tiles.set(partialKey,partialTile)',context);
-  controls.detail.onclick();
-  await new Promise(resolve=>setTimeout(resolve,40));
-  assert.strictEqual(vm.runInContext('level()',context),32);
-  assert(vm.runInContext('[...tiles.values()].some(tile=>tile.factor===8)',context),
-    'the fine level should stay cached across detail changes');
-  await settle();
   assert(counts.fadeDraws>0,'individual loaded tiles should fade in');
   assert(vm.runInContext('[...tiles.values()].some(tile=>tile.factor===8&&tile.raster)',context),
-    'old tile canvases should remain cached across detail changes');
-  await new Promise(resolve=>setTimeout(resolve,500));
-  assert.strictEqual(vm.runInContext('level()',context),32,'data-saving mode should not refine on idle');
-  const bytesBeforeRevisit=vm.runInContext('transferred',context);
-  const pathsBeforeRevisit=counts.paths;
-  controls.detail.onclick();
-  await settle();
-  assert.strictEqual(vm.runInContext('level()',context),8);
-  assert(vm.runInContext('[...needed.values()].every(tile=>tile.factor===8)',context));
-  assert.strictEqual(vm.runInContext('transferred',context),bytesBeforeRevisit,
-    'revisiting a cached detail level should not download its tiles again');
-  assert.strictEqual(counts.paths,pathsBeforeRevisit,
-    'revisiting a cached detail level should not redraw its cells');
-  const beforeZoom={bytes:vm.runInContext('transferred',context),
-    tile:vm.runInContext('[...tiles.values()].find(tile=>tile.factor===8&&tile.raster)',context)};
+    'fine tile canvases should remain cached during automatic refinement');
+  const beforeZoom=vm.runInContext('[...tiles.values()].find(tile=>tile.factor===8&&tile.raster)',context);
   controls.zoomIn.onclick();
   await settle();
   controls.zoomOut.onclick();
   await settle();
-  await new Promise(resolve=>setTimeout(resolve,300));
-  assert.strictEqual(vm.runInContext('transferred',context),beforeZoom.bytes,
-    'zooming through an already loaded area should reuse numeric tiles');
-  assert.strictEqual(vm.runInContext(`tiles.get(${JSON.stringify(beforeZoom.tile.key)})`,context),
-    beforeZoom.tile,'zooming back should retain the fine numeric tile');
+  assert.strictEqual(vm.runInContext(`tiles.get(${JSON.stringify(beforeZoom.key)})`,context),
+    beforeZoom,'zooming back should retain the fine numeric tile');
   for(let i=0;i<6;i++)controls.zoomIn.onclick();
   vm.runInContext('window.lineageMapView.focus(map.width*.4004,map.height*.3263)',context);
   await settle();
-  assert.strictEqual(vm.runInContext('level()',context),2);
-  assert(vm.runInContext('[...needed.values()].every(tile=>tile.factor===2)',context));
+  assert.strictEqual(vm.runInContext('level()',context),4);
+  assert(vm.runInContext('[...needed.values()].every(tile=>tile.factor===4)',context));
   const beforeDrag={...counts};
   let selectionPrevented=false;
   listeners.pointerdown({pointerId:1,clientX:500,clientY:500,
@@ -146,7 +124,6 @@ async function settle(){
   assert(vm.runInContext('panX',context)!==0);
   await settle();
   assert(counts.draws>beforeDrag.draws,'dragging should composite cached tiles');
-  controls.detail.onclick();
   vm.runInContext('window.lineageMapView.focus(map.width*.4004,map.height*.3263)',context);
   assert.strictEqual(vm.runInContext('level()',context),4,'auto mode should initially use coarse Dragon Valley cells');
   await settle();

@@ -12,7 +12,7 @@ const MAX_RASTER_BYTES=96*1024*1024;
 const FADE_IN_MS=180;
 const SEA_COLOR='#0a2c48';
 
-let map=null,availableTiles=null,zoom=1,fitZoom=1,panX=0,panY=0,detailMode=0;
+let map=null,availableTiles=null,zoom=1,fitZoom=1,panX=0,panY=0;
 let dragging=null,pinch=null,frame=0,updateTimer=0,active=0,transferred=0;
 const touchPoints=new Map();
 let suppressTouchClickUntil=0;
@@ -103,7 +103,7 @@ function cellEstimate(factor,area){
 function preferredLevel(){
   const ratio=zoom/fitZoom;
   let index=ratio<=.75?5:ratio<=1.5?4:ratio<=3?3:ratio<=6?2:ratio<=12?1:0;
-  index=Math.max(0,Math.min(map.levels.length-1,index+detailMode));
+  index=Math.max(0,Math.min(map.levels.length-1,index));
   const area=bounds(.25);
   while(index<map.levels.length-1){
     const factor=map.levels[index];
@@ -115,7 +115,6 @@ function preferredLevel(){
 
 function baseLevel(){
   const preferred=preferredLevel();
-  if(detailMode!==0)return preferred;
   const index=map.levels.indexOf(preferred);
   if(index===0)return map.levels[1];
   const finer=map.levels[index-1];
@@ -132,7 +131,7 @@ function cancelIdle(resetDisplay=false){
 }
 
 function scheduleIdleRefine(){
-  if(!map||dragging||detailMode!==0||idleFactor||idleTimer)return;
+  if(!map||dragging||idleFactor||idleTimer)return;
   const index=map.levels.indexOf(level());
   if(index<=0)return;
   const coarse=level();
@@ -142,7 +141,7 @@ function scheduleIdleRefine(){
   if([...coarseTiles.keys()].some(key=>!tiles.has(key)))return;
   idleTimer=setTimeout(()=>{
     idleTimer=0;
-    if(dragging||detailMode!==0||level()!==coarse)return;
+    if(dragging||level()!==coarse)return;
     const fineTiles=tileList(finer,bounds(.25));
     if(!fineTiles.size)return;
     idleFactor=finer;
@@ -507,12 +506,6 @@ const center=()=>{const r=stage.getBoundingClientRect();return [r.left+r.width/2
 document.getElementById('fit').onclick=fit;
 document.getElementById('zoomIn').onclick=()=>zoomAt(1.4,...center());
 document.getElementById('zoomOut').onclick=()=>zoomAt(1/1.4,...center());
-document.getElementById('detail').onclick=()=>{
-  loadFocus=null;
-  detailMode=detailMode===0?1:detailMode===1?-1:0;
-  document.getElementById('detail').textContent=`細節：${detailMode===1?'省流':detailMode===-1?'精細':'自動'}`;
-  cancelIdle(true);render(0);refreshRasters();
-};
 stage.addEventListener('wheel',event=>{
   if(event.target.closest('#landmark-panel'))return;
   event.preventDefault();zoomAt(event.deltaY<0?1.18:1/1.18,event.clientX,event.clientY);

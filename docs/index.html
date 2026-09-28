@@ -117,7 +117,6 @@ button:hover,button:focus-visible{background:#ffffff23;outline:none}
   #stage.editing-coordinate #landmark-panel,#stage.editing-coordinate #landmark-panel.editor-left{top:auto;bottom:calc(8px + env(safe-area-inset-bottom));right:8px;left:8px;width:calc(100vw - 16px);max-height:52dvh}
   #stage.editing-coordinate #landmark-panel.editor-top{top:calc(8px + env(safe-area-inset-top));bottom:auto}
 }
-@media(max-width:420px){#controls{display:grid;grid-template-columns:repeat(3,44px)}#controls #detail{grid-column:1 / 4;grid-row:2}#controls #fit{grid-column:1;grid-row:1}#controls #zoomOut{grid-column:2;grid-row:1}#controls #zoomIn{grid-column:3;grid-row:1}}
 </style>
 </head>
 <body>
@@ -136,7 +135,6 @@ button:hover,button:focus-visible{background:#ffffff23;outline:none}
   <button class="panel" id="landmarks-toggle" title="顯示或隱藏座標清單" aria-controls="landmark-panel" aria-expanded="false">座標</button>
   <div class="panel" id="controls" aria-label="地圖檢視">
     <button id="fit" title="顯示全圖">全圖</button>
-    <button id="detail" title="切換地形格細膩度">細節：自動</button>
     <button id="zoomOut" title="縮小" aria-label="縮小">−</button>
     <button id="zoomIn" title="放大" aria-label="放大">＋</button>
   </div>
