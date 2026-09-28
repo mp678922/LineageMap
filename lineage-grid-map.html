@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>天堂大陸｜菱形格地形圖</title>
+<style>
+:root{color-scheme:dark;--sea:#0a2c48;--panel:#171d20e8;--line:#ffffff36;--text:#f2ecdf}
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;margin:0;background:var(--sea);color:var(--text);font:14px/1.4 system-ui,"Noto Sans TC","Microsoft JhengHei",sans-serif}
+#stage{position:relative;width:100%;height:100%;overflow:hidden;touch-action:none;cursor:grab;background:var(--sea)}
+#stage,#stage *{user-select:none;-webkit-user-select:none}
+#stage.dragging{cursor:grabbing}
+#terrain{position:absolute;left:-20%;top:-20%;width:140%;height:140%;user-select:none;pointer-events:none}
+.panel{position:absolute;z-index:1;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 25px #0005;backdrop-filter:blur(8px)}
+#title{top:14px;left:14px;padding:9px 13px;pointer-events:none}
+#title strong{display:block;font-size:15px;letter-spacing:.04em}
+#title span{display:block;color:#c5c5b8;font-size:11px}
+#controls{top:14px;right:14px;display:flex;gap:4px;padding:5px}
+button{height:34px;min-width:34px;padding:0 9px;border:0;border-radius:6px;background:transparent;color:var(--text);font:inherit;cursor:pointer}
+button:hover,button:focus-visible{background:#ffffff23;outline:none}
+#credit{bottom:12px;right:14px;padding:6px 9px;font-size:11px;color:#d5d5c9}
+#credit a{color:inherit;text-decoration:none}
+#credit a:hover{text-decoration:underline}
+@media(max-width:600px){#title{top:8px;left:8px}#controls{top:8px;right:8px}#controls button{padding:0 6px}#credit{right:8px;bottom:8px}}
+</style>
+</head>
+<body>
+<main id="stage" aria-label="天堂大陸菱形格地形圖">
+  <canvas id="terrain" aria-label="依縮放等級以菱形格繪製的大陸、說話之島與龍之谷地形"></canvas>
+  <div class="panel" id="title"><strong>天堂大陸</strong><span id="progress">繪製地形中…</span></div>
+  <div class="panel" id="controls" aria-label="地圖檢視">
+    <button id="valley" title="移至龍之谷">龍之谷</button>
+    <button id="fit" title="顯示全圖">全圖</button>
+    <button id="detail" title="切換地形格細膩度">細節：自動</button>
+    <button id="zoomOut" title="縮小" aria-label="縮小">−</button>
+    <button id="zoomIn" title="放大" aria-label="放大">＋</button>
+  </div>
+  <div class="panel" id="credit">地形取樣參考：<a href="https://www.lineage.trade/market?mode=map" target="_blank" rel="noopener">lineage.trade</a></div>
+</main>
+<script>
+const stage=document.getElementById('stage');
+const terrain=document.getElementById('terrain');
+const progress=document.getElementById('progress');
+const context=terrain.getContext('2d',{alpha:false});
+let grid=null,levels=[],cache=null,inflight=null,requestTimer=0,requestId=0;
+let detailMode=0;
+let zoom=1, fitZoom=1, panX=0, panY=0, dragging=null;
+let pendingFrame=0,lastTransfer='';
+function chooseLevel(){
+  const ratio=zoom/fitZoom;
+  let index=ratio<=.75?5:ratio<=1.5?4:ratio<=3?3:ratio<=6?2:ratio<=12?1:0;
+  index=Math.max(0,Math.min(levels.length-1,index+detailMode));
+  const area=bounds(.28);
+  const worldWidth=Math.max(0,Math.min(grid.width,area.right)-Math.max(0,area.left));
+  const worldHeight=Math.max(0,Math.min(grid.height,area.bottom)-Math.max(0,area.top));
+  while(index<levels.length-1){
+    const factor=levels[index];
+    const estimated=(Math.ceil(worldWidth/(grid.columnWidth*factor))+2)
+      *(Math.ceil(worldHeight/(grid.rowHeight*factor))+2);
+    if(estimated<=180000)break;
+    index++;
+  }
+  return levels[index];
+}
+function bounds(margin=0){
+  const width=stage.clientWidth,height=stage.clientHeight;
+  const extraX=width*margin/zoom,extraY=height*margin/zoom;
+  return {
+    left:grid.width/2+(-width/2-panX)/zoom-extraX,
+    right:grid.width/2+(width/2-panX)/zoom+extraX,
+    top:grid.height/2+(-height/2-panY)/zoom-extraY,
+    bottom:grid.height/2+(height/2-panY)/zoom+extraY,
+  };
+}
+function covers(entry,factor,area){
+  if(!entry||entry.factor!==factor)return false;
+  const b=entry.bounds;
+  return b.left<=area.left&&b.top<=area.top&&b.right>=area.right&&b.bottom>=area.bottom;
+}
+function paint(){
+  pendingFrame=0;
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  const width=stage.clientWidth*1.4,height=stage.clientHeight*1.4;
+  const pixelWidth=Math.round(width*dpr),pixelHeight=Math.round(height*dpr);
+  if(terrain.width!==pixelWidth||terrain.height!==pixelHeight){
+    terrain.width=pixelWidth;terrain.height=pixelHeight;
+  }
+  context.setTransform(dpr,0,0,dpr,0,0);
+  context.fillStyle='#0a2c48';context.fillRect(0,0,width,height);
+  if(!grid||!cache)return;
+  const factor=cache.factor;
+  const halfWidth=grid.halfWidth*factor,halfHeight=grid.halfHeight*factor;
+  const columnWidth=grid.columnWidth*factor,rowHeight=grid.rowHeight*factor;
+  const area=bounds(.2);
+  context.setTransform(dpr*zoom,0,0,dpr*zoom,
+    dpr*(width/2+panX-grid.width/2*zoom),
+    dpr*(height/2+panY-grid.height/2*zoom));
+  context.lineWidth=.3/zoom;
+  context.strokeStyle='rgba(8,12,10,.24)';
+  for(const [row,firstCol,colors] of cache.rows){
+    const cy=row*rowHeight,firstX=(row%2)*halfWidth;
+    if(cy+halfHeight<area.top||cy-halfHeight>area.bottom)continue;
+    const colStart=Math.max(firstCol,Math.floor((area.left-halfWidth-firstX)/columnWidth));
+    const colEnd=Math.min(firstCol+colors.length/6-1,Math.ceil((area.right+halfWidth-firstX)/columnWidth));
+    for(let col=colStart;col<=colEnd;col++){
+      const offset=(col-firstCol)*6;
+      const hex=colors.slice(offset,offset+6);
+      if(hex==='------')continue;
+      const cx=firstX+col*columnWidth;
+      context.beginPath();
+      context.moveTo(cx,cy-halfHeight);
+      context.lineTo(cx+halfWidth,cy);
+      context.lineTo(cx,cy+halfHeight);
+      context.lineTo(cx-halfWidth,cy);
+      context.closePath();
+      context.fillStyle='#'+hex;
+      context.fill();context.stroke();
+    }
+  }
+  if(!inflight)progress.textContent=`${factor===1?'細格':factor+' 倍取樣'} · ${cache.cells.toLocaleString()} 格${lastTransfer?' · '+lastTransfer:''}`;
+}
+function render(){
+  if(!dragging&&!pendingFrame)pendingFrame=requestAnimationFrame(paint);
+  if(grid)scheduleData(dragging?140:90);
+}
+function scheduleData(delay){
+  const factor=chooseLevel(),area=bounds();
+  if(covers(cache,factor,area)){
+    if(inflight){inflight.controller.abort();inflight=null;requestId++;}
+    return;
+  }
+  if(covers(inflight,factor,area))return;
+  clearTimeout(requestTimer);
+  requestTimer=setTimeout(loadData,delay);
+}
+async function loadData(){
+  const factor=chooseLevel(),area=bounds();
+  if(covers(cache,factor,area)){
+    if(inflight){inflight.controller.abort();inflight=null;requestId++;}
+    return;
+  }
+  if(covers(inflight,factor,area))return;
+  if(inflight)inflight.controller.abort();
+  const expanded=bounds(.28);
+  const requested={
+    left:Math.floor(expanded.left),top:Math.floor(expanded.top),
+    right:Math.ceil(expanded.right),bottom:Math.ceil(expanded.bottom),
+  };
+  const controller=new AbortController(),id=++requestId;
+  inflight={factor,bounds:requested,controller};
+  progress.textContent='載入目前視窗的地形…';
+  const params=new URLSearchParams({factor,...requested});
+  try{
+    const response=await fetch('/api/terrain?'+params,{signal:controller.signal});
+    if(!response.ok)throw new Error(`API ${response.status}`);
+    const data=await response.json();
+    if(id!==requestId)return;
+    cache={...data,bounds:requested};
+    const bytes=Number(response.headers.get('Content-Length'));
+    lastTransfer=bytes?`${Math.round(bytes/1024)} KB 傳輸`:'';
+    inflight=null;
+    render();
+  }catch(error){
+    if(error.name==='AbortError')return;
+    if(id!==requestId)return;
+    inflight=null;
+    progress.textContent='地形載入失敗 · 請檢查本機 API';
+  }
+}
+function fit(){
+  if(!grid)return;
+  fitZoom=Math.min(stage.clientWidth/grid.width,stage.clientHeight/grid.height)*.96;
+  zoom=fitZoom;panX=0;panY=0;render();
+}
+function zoomAt(factor,clientX,clientY){
+  const rect=stage.getBoundingClientRect();
+  const x=clientX-rect.left-rect.width/2,y=clientY-rect.top-rect.height/2;
+  const worldX=(x-panX)/zoom,worldY=(y-panY)/zoom;
+  zoom=Math.max(fitZoom*.6,Math.min(fitZoom*24,zoom*factor));
+  panX=x-worldX*zoom;panY=y-worldY*zoom;render();
+}
+const center=()=>{const r=stage.getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2];};
+document.getElementById('fit').onclick=fit;
+document.getElementById('detail').onclick=()=>{
+  detailMode=detailMode===0?1:detailMode===1?-1:0;
+  document.getElementById('detail').textContent=`細節：${detailMode===1?'省流':detailMode===-1?'精細':'自動'}`;
+  render();
+};
+document.getElementById('zoomIn').onclick=()=>zoomAt(1.4,...center());
+document.getElementById('zoomOut').onclick=()=>zoomAt(1/1.4,...center());
+document.getElementById('valley').onclick=()=>{
+  if(!grid)return;
+  zoom=fitZoom*7;
+  panX=(grid.width/2-grid.width*.4004)*zoom;
+  panY=(grid.height/2-grid.height*.3263)*zoom;
+  render();
+};
+stage.addEventListener('wheel',event=>{event.preventDefault();zoomAt(event.deltaY<0?1.18:1/1.18,event.clientX,event.clientY);},{passive:false});
+stage.addEventListener('pointerdown',event=>{
+  if(event.target.closest('button,a'))return;
+  event.preventDefault();
+  if(pendingFrame){cancelAnimationFrame(pendingFrame);pendingFrame=0;}
+  dragging={
+    id:event.pointerId,startX:event.clientX,startY:event.clientY,
+    basePanX:panX,basePanY:panY,lastX:event.clientX,lastY:event.clientY,
+  };
+  stage.setPointerCapture(event.pointerId);stage.classList.add('dragging');
+});
+stage.addEventListener('pointermove',event=>{
+  if(!dragging||dragging.id!==event.pointerId)return;
+  dragging.lastX=event.clientX;dragging.lastY=event.clientY;
+  const dx=event.clientX-dragging.startX,dy=event.clientY-dragging.startY;
+  panX=dragging.basePanX+dx;panY=dragging.basePanY+dy;
+  terrain.style.transform=`translate(${dx}px,${dy}px)`;
+  if(Math.abs(dx)>stage.clientWidth*.17||Math.abs(dy)>stage.clientHeight*.17){
+    terrain.style.transform='';
+    dragging.basePanX=panX;dragging.basePanY=panY;
+    dragging.startX=event.clientX;dragging.startY=event.clientY;
+    paint();
+  }
+  render();
+});
+function stopDrag(event){
+  if(dragging?.id!==event.pointerId)return;
+  dragging=null;terrain.style.transform='';stage.classList.remove('dragging');
+  render();if(grid)scheduleData(0);
+}
+stage.addEventListener('pointerup',stopDrag);
+stage.addEventListener('pointercancel',stopDrag);
+window.addEventListener('resize',fit);
+if(location.protocol==='file:'){
+  progress.textContent='請用本機 API 網址開啟地圖';
+}else{
+  fetch('/api/meta').then(response=>{
+    if(!response.ok)throw new Error(`API ${response.status}`);
+    return response.json();
+  }).then(data=>{grid=data;levels=data.levels;fit();})
+    .catch(()=>{progress.textContent='無法連線本機地圖 API';});
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+/terrain-grid.json
+/terrain-lod.json
+/terrain-grid-data.js
+/terrain-lod-data.js
+/terrain.sqlite
+/terrain-preview.png
+/dragon-valley-preview.png
+/terrain-vector-overview.svg
+/__pycache__/
+*.pyc

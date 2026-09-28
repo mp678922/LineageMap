@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>亞丁大陸｜菱形格地形圖</title>
+<style>
+:root{color-scheme:dark;--sea:#0a2c48;--panel:#171d20e8;--line:#ffffff36;--text:#f2ecdf}
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;margin:0;background:var(--sea);color:var(--text);font:14px/1.4 system-ui,"Noto Sans TC","Microsoft JhengHei",sans-serif}
+#stage{position:relative;width:100%;height:100%;overflow:hidden;touch-action:none;cursor:grab;background:var(--sea)}
+#stage,#stage *{user-select:none;-webkit-user-select:none}
+#stage.dragging{cursor:grabbing}
+#terrain{position:absolute;left:-20%;top:-20%;width:140%;height:140%;user-select:none;pointer-events:none}
+#landmark-layer{position:absolute;inset:0;pointer-events:none;z-index:1}
+.landmark-pin{position:absolute;transform:translate(-50%,-100%);padding:4px 7px;height:auto;max-width:170px;background:#f5cf68;color:#29251a;border:2px solid #493b20;border-radius:16px;box-shadow:0 2px 8px #0008;font-size:12px;white-space:nowrap;pointer-events:auto}
+.landmark-pin::after{content:"";position:absolute;left:50%;bottom:-7px;width:9px;height:9px;background:#f5cf68;border-right:2px solid #493b20;border-bottom:2px solid #493b20;transform:translateX(-50%) rotate(45deg)}
+.landmark-pin[data-type="boss"]{background:#e89888;border-color:#73392f}
+.landmark-pin[data-type="boss"]::after{background:#e89888;border-color:#73392f}
+.landmark-pin[data-type="note"]{background:#a9d7dc;border-color:#3d6470}
+.landmark-pin[data-type="note"]::after{background:#a9d7dc;border-color:#3d6470}
+.landmark-pin.selected{filter:brightness(1.15);box-shadow:0 0 0 2px #fff9,0 2px 8px #0008}
+.landmark-icon{display:inline-block;width:1.5em;text-align:center;flex:none}
+.landmark-pin .landmark-icon{margin-right:2px}
+#landmark-list button,#editor-landmark-list button{display:flex;align-items:center;gap:4px}
+.landmark-pin.unlocked{cursor:grab;outline:2px solid #98e2b0;touch-action:none}
+.landmark-pin.unlocked.dragging-pin{cursor:grabbing}
+.landmark-origin{opacity:.42;border-style:dashed;filter:saturate(.45);pointer-events:none}
+.panel{position:absolute;z-index:1;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 25px #0005;backdrop-filter:blur(8px)}
+#title{bottom:12px;right:14px;padding:9px 13px;pointer-events:none;text-align:right}
+#title strong{display:block;font-size:15px;letter-spacing:.04em}
+#title span{display:block;color:#c5c5b8;font-size:11px}
+#controls{top:14px;right:14px;display:flex;gap:4px;padding:5px}
+#landmarks-toggle{top:14px;left:14px;min-width:68px;padding:0 13px;border:1px solid var(--line)}
+#landmarks-toggle[aria-expanded="true"]{border-color:#d7ad57;background:#d7ad5740}
+button{height:34px;min-width:34px;padding:0 9px;border:0;border-radius:6px;background:transparent;color:var(--text);font:inherit;cursor:pointer}
+button:hover,button:focus-visible{background:#ffffff23;outline:none}
+#landmark-panel{z-index:2;top:65px;left:14px;width:min(340px,calc(100vw - 28px));max-height:calc(100vh - 85px);overflow:auto}
+#landmark-panel[hidden],#landmark-list-view[hidden],#landmark-edit-view[hidden],#editor-gate[hidden],#editor-workspace[hidden],#landmark-editor[hidden]{display:none}
+#landmark-panel header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 9px 0}
+#landmark-panel h2{font-size:15px;margin:0}
+#landmark-panel p{margin:7px 0;color:#d5d5c9}
+#landmark-tabs{display:flex;gap:3px;min-width:0;flex:1}
+#landmark-tabs button{flex:1;min-width:0;padding:0 5px;color:#c8c7be;border-radius:6px 6px 0 0}
+#landmark-tabs button[aria-selected="true"]{color:#ffe2a1;background:#d7ad5733;box-shadow:inset 0 -2px #d7ad57}
+#landmark-status{padding:0 14px;font-size:12px}
+#landmark-list,#editor-landmark-list{display:grid;gap:5px;max-height:min(42vh,300px);overflow:auto;padding:3px 12px 12px}
+#landmark-list button,#editor-landmark-list button{height:auto;min-height:34px;text-align:left;background:#ffffff12;padding:7px 9px}
+#landmark-list button.selected,#editor-landmark-list button.selected{background:#d7ad5740}
+#landmark-info{padding:0 14px}
+#landmark-editor{padding:5px 14px 14px}
+#editor-workspace:has(#landmark-editor:not([hidden])) #editor-toolbar,#editor-workspace:has(#landmark-editor:not([hidden])) #editor-landmark-list{display:none}
+#editor-gate{padding:8px 14px 18px}
+#editor-gate h3{margin:0;font-size:15px;color:#f0dfad}
+#editor-mode-hint{font-size:12px}
+#editor-workspace{display:flex;flex-direction:column;min-height:220px}
+#editor-toolbar{padding:2px 12px 11px}
+#editor-toolbar button{width:100%}
+#editor-toolbar #landmark-edit-toggle,#landmark-editor button[type="submit"],#landmark-login button[type="submit"]{background:#c49a4a;color:#211b13;font-weight:700}
+#landmark-editor button,#landmark-login button{background:#ffffff1b}
+#editor-session-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;border-top:1px solid var(--line);padding:10px 14px;background:#0b1824a8;color:#bcd3c7;font-size:12px}
+#editor-session-footer button{border:1px solid #ffffff3a;color:#d9d5c8;white-space:nowrap}
+#landmark-login{margin-top:8px}
+#landmark-login button[type="submit"]{width:100%;margin-top:5px}
+#position-control{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:8px 0}
+#position-control #landmark-position{margin:0;font-weight:700}
+#landmark-editor #landmark-drag-lock{height:auto;min-height:32px;white-space:nowrap;border:1px solid #d5ae63;background:#473921;color:#ffe6b4}
+#landmark-editor #landmark-drag-lock.unlocked{border-color:#98e2b0;background:#184b37;color:#dbffe5}
+#landmark-editor #landmark-drag-lock[hidden]{display:none}
+#landmark-panel #landmark-drag-hint{font-size:12px;color:#e6d59d}
+#landmark-drag-hint[hidden]{display:none}
+#landmark-editor-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+#landmark-editor-actions button{flex:1}
+#landmark-editor-actions .danger{flex:0 0 auto}
+#landmark-panel label{display:grid;gap:3px;margin:8px 0;font-size:12px}
+#landmark-panel input,#landmark-panel textarea,#landmark-panel select{width:100%;border:1px solid #ffffff40;border-radius:5px;background:#0d1f2c;color:var(--text);padding:7px;font:inherit}
+#landmark-panel input,#landmark-panel textarea{user-select:text;-webkit-user-select:text}
+#landmark-panel textarea{min-height:66px;resize:vertical}
+#landmark-panel .danger{color:#ffb0a5}
+#coordinate-placement[hidden],#placement-target[hidden]{display:none}
+#coordinate-placement{position:absolute;inset:0;z-index:3;pointer-events:none}
+#placement-guide{position:absolute;top:16px;left:50%;transform:translateX(-50%);width:max-content;max-width:calc(100vw - 130px);padding:9px 13px;border:1px solid #ffffff65;border-radius:9px;background:#14232cdd;box-shadow:0 4px 18px #0008;text-align:center}
+#placement-guide strong{display:block;font-size:14px}
+#placement-guide span{display:block;color:#e4dfd0;font-size:12px}
+#placement-cancel{position:absolute;top:16px;right:16px;min-width:72px;background:#14232cee;border:1px solid #ffffff65;box-shadow:0 4px 18px #0008;pointer-events:auto}
+#placement-cancel:hover,#placement-cancel:focus-visible{background:#33414b}
+#placement-target{position:absolute;left:0;top:0;transform:translate(-50%,-50%);filter:drop-shadow(0 2px 3px #000c);pointer-events:none}
+#placement-diamond{display:block;fill:#ffe17a35;stroke:#ffe17a;stroke-width:2;vector-effect:non-scaling-stroke}
+#placement-pin{position:absolute;left:50%;bottom:50%;width:30px;height:38px;transform:translateX(-50%);fill:#ffe17a;stroke:#463918;stroke-width:1.5}
+#stage.placing-coordinate,#stage.placing-coordinate.dragging{cursor:crosshair}
+#stage.placing-coordinate #title,#stage.placing-coordinate #controls,#stage.placing-coordinate #landmarks-toggle,#stage.placing-coordinate #landmark-panel,#stage.placing-coordinate #landmark-layer{display:none}
+#stage.editing-coordinate #title,#stage.editing-coordinate #controls,#stage.editing-coordinate #landmarks-toggle,#stage.editing-coordinate #landmark-layer{display:none}
+#stage.editing-coordinate #landmark-panel{z-index:4;top:16px;right:16px;left:auto;max-height:calc(100vh - 32px)}
+#stage.editing-coordinate #landmark-panel.editor-left{right:auto;left:16px}
+#stage.editing-coordinate #landmark-panel header,#stage.editing-coordinate #editor-toolbar,#stage.editing-coordinate #editor-landmark-list,#stage.editing-coordinate #editor-session-footer,#stage.editing-coordinate #placement-guide,#stage.editing-coordinate #placement-cancel{display:none}
+#editor-position-hint{display:none}
+#stage.editing-coordinate #editor-position-hint{display:block}
+#landmark-panel #editor-title{margin:0 0 8px;font-size:17px}
+#landmark-panel #editor-position-hint{color:#e6d59d;font-size:12px}
+#stage.editing-coordinate #landmark-position{font-weight:700;color:#ffe17a}
+#stage.editing-coordinate #placement-target{pointer-events:auto;touch-action:none;cursor:grab}
+#stage.editing-coordinate #placement-target.dragging-target{cursor:grabbing}
+@media(max-width:600px){#title{right:8px;bottom:8px}#controls{top:8px;right:8px}#controls button{padding:0 6px}#landmarks-toggle{top:8px;left:8px}#landmark-panel{top:54px;left:8px}}
+@media(max-width:600px){#placement-cancel{top:10px;right:10px}#placement-guide{top:54px;max-width:calc(100vw - 20px)}}
+@media(max-width:600px){#stage.editing-coordinate #landmark-panel,#stage.editing-coordinate #landmark-panel.editor-left{top:auto;bottom:8px;right:8px;left:auto;width:min(300px,calc(100vw - 16px));max-height:min(48vh,430px)}}
+</style>
+</head>
+<body>
+<main id="stage" aria-label="亞丁大陸菱形格地形圖">
+  <canvas id="terrain" aria-label="依縮放等級以菱形格繪製的大陸、說話之島與龍之谷地形"></canvas>
+  <div id="landmark-layer" aria-label="座標位置"></div>
+  <div id="coordinate-placement" hidden>
+    <div id="placement-guide"><strong>選擇座標位置</strong><span>移動滑鼠預覽，點一下放置；拖曳移動地圖</span></div>
+    <button id="placement-cancel" type="button">取消</button>
+    <div id="placement-target" hidden aria-hidden="true">
+      <svg id="placement-diamond" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M50 1 L99 50 L50 99 L1 50 Z"/></svg>
+      <svg id="placement-pin" viewBox="0 0 30 38" aria-hidden="true"><path d="M15 1C7.3 1 1 7.2 1 15c0 10 14 22 14 22s14-12 14-22C29 7.2 22.7 1 15 1Z"/><circle cx="15" cy="15" r="5" fill="#463918" stroke="none"/></svg>
+    </div>
+  </div>
+  <div class="panel" id="title"><strong>亞丁大陸</strong><span id="progress">繪製地形中…</span></div>
+  <button class="panel" id="landmarks-toggle" title="顯示或隱藏座標清單" aria-controls="landmark-panel" aria-expanded="false">座標</button>
+  <div class="panel" id="controls" aria-label="地圖檢視">
+    <button id="fit" title="顯示全圖">全圖</button>
+    <button id="detail" title="切換地形格細膩度">細節：自動</button>
+    <button id="zoomOut" title="縮小" aria-label="縮小">−</button>
+    <button id="zoomIn" title="放大" aria-label="放大">＋</button>
+  </div>
+  <aside class="panel" id="landmark-panel" aria-label="座標" hidden>
+    <header>
+      <div id="landmark-tabs" role="tablist" aria-label="座標功能">
+        <button id="landmark-list-tab" type="button" role="tab" aria-controls="landmark-list-view" aria-selected="true">座標清單</button>
+        <button id="landmark-edit-tab" type="button" role="tab" aria-controls="landmark-edit-view" aria-selected="false">編輯模式</button>
+      </div>
+      <button id="landmarks-close" aria-label="關閉座標">×</button>
+    </header>
+    <p id="landmark-status">連線中…</p>
+    <section id="landmark-list-view" role="tabpanel" aria-labelledby="landmark-list-tab">
+      <div id="landmark-list"></div>
+      <p id="landmark-info"></p>
+    </section>
+    <section id="landmark-edit-view" role="tabpanel" aria-labelledby="landmark-edit-tab" hidden>
+      <div id="editor-gate">
+        <h3>編輯模式</h3>
+        <p id="editor-mode-hint">請輸入編輯密碼。</p>
+        <form id="landmark-login">
+          <label>編輯密碼<input id="landmark-password" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" required></label>
+          <button type="submit">進入編輯模式</button>
+        </form>
+      </div>
+      <div id="editor-workspace" hidden>
+        <div id="editor-toolbar"><button id="landmark-edit-toggle" type="button">新增座標</button></div>
+        <div id="editor-landmark-list"></div>
+        <form id="landmark-editor" hidden>
+          <h2 id="editor-title">新增座標</h2>
+          <div id="position-control"><p id="landmark-position"></p><button type="button" id="landmark-drag-lock" hidden></button></div>
+          <p id="landmark-drag-hint" hidden>已解鎖：拖曳地圖上選取的座標可調整位置。</p>
+          <p id="editor-position-hint">拖曳地圖上的圖釘可微調位置；拖曳空白處可移動地圖。</p>
+          <label>名稱<input id="landmark-name" maxlength="60" required></label>
+          <label>類型<select id="landmark-type"><option value="place">📍 座標</option><option value="boss">👑 頭目</option><option value="note">📝 筆記</option></select></label>
+          <label>說明<textarea id="landmark-note" maxlength="500"></textarea></label>
+          <div id="landmark-editor-actions">
+            <button type="submit">儲存座標</button>
+            <button type="button" id="landmark-cancel">取消</button>
+            <button type="button" id="landmark-delete" class="danger" hidden>刪除</button>
+          </div>
+        </form>
+        <div id="editor-session-footer">
+          <span>編輯身分已驗證</span>
+          <button id="landmark-signout" type="button">登出</button>
+        </div>
+      </div>
+    </section>
+  </aside>
+</main>
+<script src="./map.js" defer></script>
+<script src="./landmark-config.js" defer></script>
+<script src="./landmarks.js" defer></script>
+</body>
+</html>
+
